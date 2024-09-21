@@ -3,7 +3,6 @@ import subprocess
 import random
 from web3 import Web3
 import json
-import os
 
 # Set up web3 connection to local Hardhat node
 web3 = Web3(Web3.HTTPProvider('http://127.0.0.1:8545'))
@@ -121,11 +120,11 @@ def run_simulation():
 
     # Example item worths for each round, in wei
     item_worths = [
-        web3.to_wei(5, 'ether'),
-        web3.to_wei(10, 'ether'),
-        web3.to_wei(7, 'ether'),
-        web3.to_wei(12, 'ether'),
-        web3.to_wei(8, 'ether')
+        web3.to_wei(random.randint(5, 50), 'ether'),
+        web3.to_wei(random.randint(5, 50), 'ether'),
+        web3.to_wei(random.randint(5, 50), 'ether'),
+        web3.to_wei(random.randint(5, 50), 'ether'),
+        web3.to_wei(random.randint(5, 50), 'ether')
     ]
 
     for round_num in range(5):
