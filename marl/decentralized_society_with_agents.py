@@ -1,17 +1,25 @@
+import os
 import numpy as np
 from web3 import Web3
 import json
 from stable_baselines3 import DQN
 import gym
 from gym import spaces
+import matplotlib.pyplot as plt
+import csv
+from stable_baselines3.common.callbacks import BaseCallback
 
 w3 = Web3(Web3.HTTPProvider('http://127.0.0.1:8545'))
 
+# Define paths and other simulation parameters
+tensorboard_log_dir = "./tensorboard_logs/"
+os.makedirs(tensorboard_log_dir, exist_ok=True)
+
 # Addresses of deployed contracts (replace these with actual addresses)
-resource_pool_address = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
-farmer_address = '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0'
-builder_address = '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9'
-trader_address = '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9'
+resource_pool_address = '0x5FbDB2315678afecb367f032d93F642f64180aa3'
+farmer_address = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
+builder_address = '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0'
+trader_address = '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9'
 
 with open('../artifacts/contracts/decentralizedSociety/ResourcePool.sol/ResourcePool.json') as f:
     resource_pool_abi = json.load(f)['abi']
@@ -32,7 +40,7 @@ trader = w3.eth.contract(address=trader_address, abi=trader_abi)
 
 # Simulation parameters
 accounts = w3.eth.accounts
-iterations = 50
+iterations = 1000
 
 class DecentralizedSocietyEnv(gym.Env):
     """
@@ -166,7 +174,71 @@ class DecentralizedSocietyEnv(gym.Env):
         # Example: Return the total resources and last action success as the current state observation.
         return np.array([self.total_resources, self.last_action_success], dtype=np.float32)
 
+class CustomTrainingCallback(BaseCallback):
+    """
+    Custom callback for logging additional metrics during training.
+    Tracks cumulative rewards, loss, and exploration rate for each episode.
+    """
+    def __init__(self, verbose=0):
+        super(CustomTrainingCallback, self).__init__(verbose)
+        self.cumulative_rewards = []
+        self.losses = []
+        self.exploration_rates = []
 
+    def _on_step(self) -> bool:
+        # Log cumulative reward
+        reward = self.locals['rewards']
+        self.cumulative_rewards.append(sum(reward))
+
+        # If using the logger, capture the current loss (optional)
+        loss = self.locals['infos'][0].get('loss', None)
+        if loss:
+            self.losses.append(loss)
+
+        # Log exploration rate
+        self.exploration_rates.append(self.model.exploration_rate)
+        
+        return True
+
+    def plot_metrics(self):
+        # Plot cumulative rewards
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.cumulative_rewards)
+        plt.title("Cumulative Reward vs. Timesteps")
+        plt.xlabel("Timesteps")
+        plt.ylabel("Cumulative Reward")
+        plt.show()
+
+        # Plot loss over time (if loss logging is active)
+        if self.losses:
+            plt.figure(figsize=(10, 6))
+            plt.plot(self.losses)
+            plt.title("Loss vs. Timesteps")
+            plt.xlabel("Timesteps")
+            plt.ylabel("Loss")
+            plt.show()
+
+        # Plot exploration decay
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.exploration_rates)
+        plt.title("Exploration Decay (ε) vs. Timesteps")
+        plt.xlabel("Timesteps")
+        plt.ylabel("Exploration Rate (ε)")
+        plt.show()
+
+    def save_metrics_to_csv(self, filename='training_metrics.csv'):
+        # Save the logged metrics to a CSV file for analysis
+        with open(filename, 'w', newline='') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerow(['Timesteps', 'Cumulative Reward', 'Loss', 'Exploration Rate'])
+            for i in range(len(self.cumulative_rewards)):
+                csv_writer.writerow([
+                    i+1, 
+                    self.cumulative_rewards[i], 
+                    self.losses[i] if self.losses else None, 
+                    self.exploration_rates[i]
+                ])
+                
 # Train the model on the simulated environment
 env = DecentralizedSocietyEnv(
     resource_pool=resource_pool,
@@ -176,19 +248,20 @@ env = DecentralizedSocietyEnv(
     accounts=w3.eth.accounts
 )
 
-model = DQN("MlpPolicy", env, verbose=1)
+model = DQN("MlpPolicy", env, verbose=1, tensorboard_log=tensorboard_log_dir )
 
 # Uncomment to retrain
+# Create the custom callback to log metrics
+callback = CustomTrainingCallback(verbose=1)
+
 # Train the model (adjust the number of timesteps as needed)
-# model.learn(total_timesteps=10000)
+model.learn(total_timesteps=10000, callback=callback)
 
 # Save the trained model to disk
-# model.save("decentralized_society_model")
+model.save("decentralized_society_model")
 
 # Load the trained model
 model = DQN.load("decentralized_society_model")
-
-from stable_baselines3 import DQN
 
 class Agent:
     """
@@ -216,51 +289,111 @@ class Agent:
         self.contract_function_efficient = contract_function_efficient
         self.contract_function_selfish = contract_function_selfish
 
-    def decide_and_act(self):
+    def decide_and_act(self, agent_type):
         """
         Determines which action to take (efficient or selfish) based on the DQN model's prediction
-        and executes the corresponding smart contract function.
+        and executes the corresponding smart contract function. Tracks the action taken.
         """
         obs = env.get_observation()  # Get the current state observation
         action, _ = self.model.predict(obs, deterministic=True)  # Get action from the model
+        
         try:
             if action == 0:
                 tx = self.contract_function_efficient().transact({'from': self.account})
                 print(f"{self.account[:6]} chose to act efficiently.")
+                
+                # Update action tracking for efficient action
+                efficient_actions[agent_type] += 1
+                if agent_type == 'farmer':
+                    farmer_rewards.append(5)
+                elif agent_type == 'builder':
+                    builder_rewards.append(5)
+                elif agent_type == 'trader':
+                    trader_rewards.append(5)
             else:
                 tx = self.contract_function_selfish().transact({'from': self.account})
                 print(f"{self.account[:6]} chose to act selfishly.")
+                
+                # Update action tracking for selfish action
+                selfish_actions[agent_type] += 1
+                if agent_type == 'farmer':
+                    farmer_rewards.append(-5)
+                elif agent_type == 'builder':
+                    builder_rewards.append(-5)
+                elif agent_type == 'trader':
+                    trader_rewards.append(-5)
+            
             w3.eth.wait_for_transaction_receipt(tx)
         except Exception as e:
             print(f"Action failed for {self.account[:6]}: {str(e)}")
+            # Penalize in case of failure
+            if agent_type == 'farmer':
+                farmer_rewards.append(-10)
+            elif agent_type == 'builder':
+                builder_rewards.append(-10)
+            elif agent_type == 'trader':
+                trader_rewards.append(-10)
 
+
+# Initialize tracking variables for both MARL and random simulations
+total_resources_over_time = []
+farmer_rewards = []
+builder_rewards = []
+trader_rewards = []
+efficient_actions = {'farmer': 0, 'builder': 0, 'trader': 0}
+selfish_actions = {'farmer': 0, 'builder': 0, 'trader': 0}
 
 def simulate():
     """
     Simulates the interactions of the decentralized society over multiple iterations. 
     Each iteration, the farmer, builder, and trader agents decide and execute their actions.
+    Tracks the total resources and actions taken over time.
     """
-    farmer_agent = Agent(accounts[0], farmer.functions.farmEfficient, farmer.functions.farmSelfish, model)
-    builder_agent = Agent(accounts[1], builder.functions.buildEfficient, builder.functions.buildSelfish, model)
-    trader_agent = Agent(accounts[2], trader.functions.tradeEfficient, trader.functions.tradeSelfish, model)
-
     for i in range(iterations):
         print(f"\nIteration {i+1}")
 
         # Agents decide and act
-        farmer_agent.decide_and_act()
+        farmer_agent.decide_and_act('farmer')
         total_resources = resource_pool.functions.getTotalResources().call()
+        total_resources_over_time.append(total_resources)
         print(f"Total Resources in Society: {total_resources}")
 
         if total_resources >= 5:
-            builder_agent.decide_and_act()
+            builder_agent.decide_and_act('builder')
 
         if total_resources >= 10:
-            trader_agent.decide_and_act()
+            trader_agent.decide_and_act('trader')
 
-        # Print final resources after actions
-        total_resources = resource_pool.functions.getTotalResources().call()
-        print(f"Total Resources after trading: {total_resources}")
+        # Track the results of each agent's action
+        print(f"Efficient Actions: {efficient_actions}")
+        print(f"Selfish Actions: {selfish_actions}")
+
+    # Plot results or write them to a CSV for further analysis
+    plot_results()
+
+def plot_results():
+    """
+    Plot the results of the simulation for analysis.
+    """
+    # Plot total resources over time
+    plt.plot(total_resources_over_time, label="Total Resources")
+    plt.title("Total Resources Over Time")
+    plt.xlabel("Iteration")
+    plt.ylabel("Resources")
+    plt.legend()
+    plt.show()
+
+    # Optionally: Write metrics to CSV
+    with open('simulation_results_with_agents.csv', 'w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerow(['Iteration', 'Total Resources', 'Farmer Reward', 'Builder Reward', 'Trader Reward'])
+        for i in range(len(total_resources_over_time)):
+            csv_writer.writerow([i+1, total_resources_over_time[i], farmer_rewards[i], builder_rewards[i], trader_rewards[i]])
+
+# Initialize agents
+farmer_agent = Agent(accounts[0], farmer.functions.farmEfficient, farmer.functions.farmSelfish, model)
+builder_agent = Agent(accounts[1], builder.functions.buildEfficient, builder.functions.buildSelfish, model)
+trader_agent = Agent(accounts[2], trader.functions.tradeEfficient, trader.functions.tradeSelfish, model)
 
 # Run the simulation
 simulate()

@@ -1,14 +1,16 @@
 import random
 from web3 import Web3
 import json
+import matplotlib.pyplot as plt
+import csv
 
 w3 = Web3(Web3.HTTPProvider('http://127.0.0.1:8545'))
 
 # Addresses of deployed contracts (replace these with actual addresses)
-resource_pool_address = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
-farmer_address = '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0'
-builder_address = '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9'
-trader_address = '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9'
+resource_pool_address = '0x5FbDB2315678afecb367f032d93F642f64180aa3'
+farmer_address = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
+builder_address = '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0'
+trader_address = '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9'
 
 with open('../artifacts/contracts/decentralizedSociety/ResourcePool.sol/ResourcePool.json') as f:
     resource_pool_abi = json.load(f)['abi']
@@ -173,9 +175,18 @@ agent_farmer = FarmerRLAgent(accounts[0], "model")
 agent_builder = BuilderRLAgent(accounts[2], "model")
 agent_trader = TraderRLAgent(accounts[2], "model")
 
+# Initialize tracking variables for both MARL and random simulations
+total_resources_over_time = []
+farmer_rewards = []
+builder_rewards = []
+trader_rewards = []
+efficient_actions = {'farmer': 0, 'builder': 0, 'trader': 0}
+selfish_actions = {'farmer': 0, 'builder': 0, 'trader': 0}
+
 def simulate():
     """
     Simulate the decentralized society by having agents make decisions for a set number of iterations.
+    Track total resources and agent actions over time.
     """
     for i in range(iterations):
         print(f"\nIteration {i+1}")
@@ -185,17 +196,22 @@ def simulate():
             if random.choice([True, False]):  # Randomly choose efficient or selfish
                 tx_farm = farmer.functions.farmEfficient().transact({'from': accounts[0]})
                 print("Farmer chose to farm efficiently")
+                efficient_actions['farmer'] += 1
+                farmer_rewards.append(5)  # Reward for efficient farming
             else:
                 tx_farm = farmer.functions.farmSelfish().transact({'from': accounts[0]})
                 print("Farmer chose to farm selfishly")
-
+                selfish_actions['farmer'] += 1
+                farmer_rewards.append(-5)  # Penalty for selfish farming
             w3.eth.wait_for_transaction_receipt(tx_farm)
         except Exception as e:
             print(f"Farmer failed to farm: {e}")
+            farmer_rewards.append(-10)  # Penalty for failure
 
         # Step 2: Check total resources in society
         total_resources = resource_pool.functions.getTotalResources().call()
         print(f"Total Resources in Society: {total_resources}")
+        total_resources_over_time.append(total_resources)
 
         # Step 3: Builder's choice: either build efficiently or selfishly
         if total_resources >= 5:  # Assuming builder needs at least 5 resources
@@ -203,15 +219,20 @@ def simulate():
                 if random.choice([True, False]):  # Randomly choose efficient or selfish
                     tx_build = builder.functions.buildEfficient().transact({'from': accounts[1]})
                     print("Builder chose to build efficiently")
+                    efficient_actions['builder'] += 1
+                    builder_rewards.append(5)  # Reward for efficient building
                 else:
                     tx_build = builder.functions.buildSelfish().transact({'from': accounts[1]})
                     print("Builder chose to build selfishly")
-
+                    selfish_actions['builder'] += 1
+                    builder_rewards.append(-5)  # Penalty for selfish building
                 w3.eth.wait_for_transaction_receipt(tx_build)
             except Exception as e:
                 print(f"Builder failed to build: {e}")
+                builder_rewards.append(-10)  # Penalty for failure
         else:
             print("Not enough resources for building")
+            builder_rewards.append(0)  # No action taken
 
         # Step 4: Trader's choice: either trade efficiently or selfishly
         if total_resources >= 10:  # Ensuring enough resources for a selfish trade
@@ -219,19 +240,46 @@ def simulate():
                 if random.choice([True, False]):  # Randomly choose efficient or selfish
                     tx_trade = trader.functions.tradeEfficient().transact({'from': accounts[2]})
                     print("Trader chose to trade efficiently")
+                    efficient_actions['trader'] += 1
+                    trader_rewards.append(7)  # Reward for efficient trading
                 else:
                     tx_trade = trader.functions.tradeSelfish().transact({'from': accounts[2]})
                     print("Trader chose to trade selfishly")
-
+                    selfish_actions['trader'] += 1
+                    trader_rewards.append(-7)  # Penalty for selfish trading
                 w3.eth.wait_for_transaction_receipt(tx_trade)
             except Exception as e:
                 print(f"Trader failed to trade: {e}")
+                trader_rewards.append(-10)  # Penalty for failure
         else:
             print("Not enough resources for trading")
+            trader_rewards.append(0)  # No action taken
 
         # Print final resources after actions
         total_resources = resource_pool.functions.getTotalResources().call()
         print(f"Total Resources after trading: {total_resources}")
+
+    # Plot results or write them to a CSV for further analysis
+    plot_results()
+
+def plot_results():
+    """
+    Plot the simulation results.
+    """
+    # Plot total resources over time
+    plt.plot(total_resources_over_time, label="Total Resources")
+    plt.title("Total Resources Over Time")
+    plt.xlabel("Iteration")
+    plt.ylabel("Resources")
+    plt.legend()
+    plt.show()
+
+    # Optionally: Write metrics to CSV
+    with open('simulation_results_no_agents.csv', 'w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerow(['Iteration', 'Total Resources', 'Farmer Reward', 'Builder Reward', 'Trader Reward'])
+        for i in range(len(total_resources_over_time)):
+            csv_writer.writerow([i+1, total_resources_over_time[i], farmer_rewards[i], builder_rewards[i], trader_rewards[i]])
 
 # Run the simulation
 simulate()
