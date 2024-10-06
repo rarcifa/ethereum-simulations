@@ -248,17 +248,17 @@ env = DecentralizedSocietyEnv(
     accounts=w3.eth.accounts
 )
 
-model = DQN("MlpPolicy", env, verbose=1, tensorboard_log=tensorboard_log_dir )
+# model = DQN("MlpPolicy", env, verbose=1, tensorboard_log=tensorboard_log_dir )
 
 # Uncomment to retrain
 # Create the custom callback to log metrics
-callback = CustomTrainingCallback(verbose=1)
+# callback = CustomTrainingCallback(verbose=1)
 
 # Train the model (adjust the number of timesteps as needed)
-model.learn(total_timesteps=10000, callback=callback)
+# model.learn(total_timesteps=10000, callback=callback)
 
 # Save the trained model to disk
-model.save("decentralized_society_model")
+# model.save("decentralized_society_model")
 
 # Load the trained model
 model = DQN.load("decentralized_society_model")
